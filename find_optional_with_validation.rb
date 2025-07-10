@@ -12,7 +12,10 @@ class OptionalWithValidationFinder
     
     # Find matches
     optional_associations.each do |association|
-      if presence_validations.include?(association)
+      # Check both association name and foreign key name
+      foreign_key = generate_foreign_key_name(association, code)
+      
+      if presence_validations.include?(association) || presence_validations.include?(foreign_key)
         results << {
           model: model_name,
           association: association
@@ -44,6 +47,15 @@ class OptionalWithValidationFinder
   end
   
   private
+  
+  def generate_foreign_key_name(association, code)
+    # Default foreign key is association_name + "_id"
+    default_foreign_key = "#{association}_id"
+    
+    # TODO: In the future, we could parse custom foreign_key options
+    # For now, we'll just use the default naming convention
+    default_foreign_key
+  end
   
   def find_optional_belongs_to(code)
     associations = []

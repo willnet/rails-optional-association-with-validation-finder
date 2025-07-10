@@ -206,6 +206,71 @@ class TestReplaceOptionalWithRequired < Minitest::Test
     assert_equal expected.strip, result.strip
   end
 
+  def test_foreign_key_validation_replacement
+    input = <<~RUBY
+      class Order < ApplicationRecord
+        belongs_to :user, optional: true
+        belongs_to :product, optional: true
+        
+        validates :user_id, presence: true
+        validates :name, presence: true
+      end
+    RUBY
+    
+    expected = <<~RUBY
+      class Order < ApplicationRecord
+        belongs_to :user, required: true
+        belongs_to :product, optional: true
+        
+        validates :name, presence: true
+      end
+    RUBY
+    
+    result = @replacer.replace_in_code(input)
+    assert_equal expected.strip, result.strip
+  end
+
+  def test_validates_presence_of_foreign_key_replacement
+    input = <<~RUBY
+      class Payment < ApplicationRecord
+        belongs_to :order, optional: true
+        validates_presence_of :order_id, :amount
+      end
+    RUBY
+    
+    expected = <<~RUBY
+      class Payment < ApplicationRecord
+        belongs_to :order, required: true
+        validates_presence_of :amount
+      end
+    RUBY
+    
+    result = @replacer.replace_in_code(input)
+    assert_equal expected.strip, result.strip
+  end
+
+  def test_mixed_association_and_foreign_key_validation_replacement
+    input = <<~RUBY
+      class Review < ApplicationRecord
+        belongs_to :user, optional: true
+        belongs_to :product, optional: true
+        
+        validates :user, presence: true
+        validates :product_id, presence: true
+      end
+    RUBY
+    
+    expected = <<~RUBY
+      class Review < ApplicationRecord
+        belongs_to :user, required: true
+        belongs_to :product, required: true
+      end
+    RUBY
+    
+    result = @replacer.replace_in_code(input)
+    assert_equal expected.strip, result.strip
+  end
+
   def test_file_processing
     require 'tmpdir'
     require 'fileutils'

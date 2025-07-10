@@ -23,7 +23,7 @@ class OptionalToRequiredReplacer
       # Replace optional: true with required: true in belongs_to
       result_lines = replace_optional_with_required(result_lines, association_name)
       
-      # Remove or modify validates statements
+      # Remove or modify validates statements for both association and foreign key
       result_lines, removed = remove_or_modify_validates(result_lines, association_name)
       lines_to_remove.concat(removed)
     end
@@ -249,16 +249,22 @@ class OptionalToRequiredReplacer
   def remove_or_modify_validates(lines, association_name)
     result = []
     lines_removed = []
+    foreign_key_name = "#{association_name}_id"
     
     lines.each_with_index do |line, index|
-      # Match validates for this association
-      if line =~ /validates\s+:#{association_name}\b/ || line =~ /validates\s+["']#{association_name}["']/
-        # Check if this validates only has presence validation
-        if line =~ /validates\s+[:"]#{association_name}["']?\s*,\s*presence:\s*(?:true|\{[^}]*\})\s*$/
+      # Match validates for this association or its foreign key
+      if line =~ /validates\s+:#{association_name}\b/ || line =~ /validates\s+["']#{association_name}["']/ ||
+         line =~ /validates\s+:#{foreign_key_name}\b/ || line =~ /validates\s+["']#{foreign_key_name}["']/
+        # Check if this validates only has presence validation (for association or foreign key)
+        association_pattern = /validates\s+[:"]#{association_name}["']?\s*,\s*presence:\s*(?:true|\{[^}]*\})\s*$/
+        foreign_key_pattern = /validates\s+[:"]#{foreign_key_name}["']?\s*,\s*presence:\s*(?:true|\{[^}]*\})\s*$/
+        
+        if line =~ association_pattern || line =~ foreign_key_pattern
           # Remove entire line
           lines_removed << index
           next
-        elsif line =~ /validates\s+[:"]#{association_name}["']?\s*,\s*(.*)presence:\s*(?:true|\{[^}]*\})\s*,?\s*(.*)$/
+        elsif line =~ /validates\s+[:"]#{association_name}["']?\s*,\s*(.*)presence:\s*(?:true|\{[^}]*\})\s*,?\s*(.*)$/ ||
+              line =~ /validates\s+[:"]#{foreign_key_name}["']?\s*,\s*(.*)presence:\s*(?:true|\{[^}]*\})\s*,?\s*(.*)$/
           # Remove just the presence part
           before = $1
           after = $2
@@ -266,13 +272,20 @@ class OptionalToRequiredReplacer
           # Reconstruct the line without presence validation
           new_validations = []
           
+          # Determine which field name to use for the reconstructed validation
+          field_name = if line.include?(":#{foreign_key_name}")
+                         foreign_key_name
+                       else
+                         association_name
+                       end
+          
           # Parse other validations (simplified approach)
           all_validations = (before + after).strip
           if all_validations.length > 0
             # Clean up extra commas
             all_validations = all_validations.gsub(/,\s*,/, ',').gsub(/,\s*$/, '').gsub(/^\s*,/, '')
             if all_validations.length > 0
-              result << "  validates :#{association_name}, #{all_validations}\n"
+              result << "  validates :#{field_name}, #{all_validations}\n"
               next
             end
           end
@@ -292,9 +305,9 @@ class OptionalToRequiredReplacer
           fields_part.scan(/:(\w+)/) { |match| fields << match[0] }
           fields_part.scan(/["'](\w+)["']/) { |match| fields << match[0] }
           
-          if fields.include?(association_name)
-            # Remove this association from the list
-            remaining_fields = fields - [association_name]
+          if fields.include?(association_name) || fields.include?(foreign_key_name)
+            # Remove this association or foreign key from the list
+            remaining_fields = fields - [association_name, foreign_key_name]
             
             if remaining_fields.empty?
               # Remove entire line if no fields remain

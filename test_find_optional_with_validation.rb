@@ -131,6 +131,55 @@ class TestFindOptionalWithValidation < Minitest::Test
     assert_equal ['customer', 'vendor'], associations
   end
 
+  def test_foreign_key_validation
+    model_code = <<~RUBY
+      class Order < ApplicationRecord
+        belongs_to :user, optional: true
+        belongs_to :product, optional: true
+        
+        validates :user_id, presence: true
+        validates :name, presence: true
+      end
+    RUBY
+    
+    result = @finder.analyze_model_code('Order', model_code)
+    
+    assert_equal 1, result.size
+    assert_equal 'user', result[0][:association]
+  end
+
+  def test_validates_presence_of_foreign_key
+    model_code = <<~RUBY
+      class Payment < ApplicationRecord
+        belongs_to :order, optional: true
+        validates_presence_of :order_id, :amount
+      end
+    RUBY
+    
+    result = @finder.analyze_model_code('Payment', model_code)
+    
+    assert_equal 1, result.size
+    assert_equal 'order', result[0][:association]
+  end
+
+  def test_mixed_association_and_foreign_key_validation
+    model_code = <<~RUBY
+      class Review < ApplicationRecord
+        belongs_to :user, optional: true
+        belongs_to :product, optional: true
+        
+        validates :user, presence: true
+        validates :product_id, presence: true
+      end
+    RUBY
+    
+    result = @finder.analyze_model_code('Review', model_code)
+    
+    assert_equal 2, result.size
+    associations = result.map { |r| r[:association] }.sort
+    assert_equal ['product', 'user'], associations
+  end
+
   def test_directory_scanning
     # Create temporary test directory structure
     require 'tmpdir'
