@@ -34,9 +34,25 @@ class OptionalToRequiredReplacer
     result_lines.join
   end
 
-  def replace_in_file(file_path, dry_run: false)
+  def replace_in_file(file_path, dry_run: false, include_specs: false)
     original_content = File.read(file_path)
-    new_content = replace_in_code(original_content)
+    
+    # Check if this is a spec file and if we should process it
+    is_spec_file = file_path.include?('spec/') && file_path.end_with?('_spec.rb')
+    
+    if is_spec_file && include_specs
+      # For spec files, we need to find the associations that were changed in model files
+      # For now, we'll get this information from the finder
+      matches = @finder.scan_directory('app/models')
+      changed_associations = matches.map { |m| m[:association] }.uniq
+      new_content = transform_spec_code(original_content, changed_associations)
+    elsif !is_spec_file
+      # Regular model file processing
+      new_content = replace_in_code(original_content)
+    else
+      # Skip spec files if include_specs is false
+      return false
+    end
     
     if original_content == new_content
       return false
@@ -56,16 +72,94 @@ class OptionalToRequiredReplacer
     true
   end
 
-  def replace_in_directory(directory, dry_run: false)
+  def replace_in_directory(directory, dry_run: false, include_specs: false)
     updated_files = 0
     
-    Dir.glob(File.join(directory, '**', '*.rb')).each do |file|
-      if replace_in_file(file, dry_run: dry_run)
+    # Find all Ruby files
+    pattern = File.join(directory, '**', '*.rb')
+    
+    Dir.glob(pattern).each do |file|
+      # Skip spec files unless include_specs is true
+      next if file.include?('spec/') && !include_specs
+      
+      if replace_in_file(file, dry_run: dry_run, include_specs: include_specs)
         updated_files += 1
       end
     end
     
+    # Also process spec files if include_specs is true
+    if include_specs
+      spec_pattern = File.join('spec', '**', '*_spec.rb')
+      Dir.glob(spec_pattern).each do |file|
+        if replace_in_file(file, dry_run: dry_run, include_specs: include_specs)
+          updated_files += 1
+        end
+      end
+    end
+    
     puts "\n#{dry_run ? 'Would update' : 'Updated'} #{updated_files} file(s)"
+  end
+
+  def transform_spec_code(code, changed_associations)
+    result = code.dup
+    
+    changed_associations.each do |association|
+      # Skip if already has .required or .optional
+      next if result.include?("belong_to(:#{association}).required") || result.include?("belong_to(:#{association}).optional")
+      
+      # Handle single-line expectations: it { is_expected.to belong_to(:user) }
+      result = result.gsub(
+        /is_expected\.to\s+belong_to\(:#{association}\)(\s*})/,
+        "is_expected.to belong_to(:#{association}).required\\1"
+      )
+      
+      # Handle single-line expectations with method chaining on same line
+      # Example: is_expected.to belong_to(:user).class_name('User')
+      # But skip multiline ones (those ending with just newline)
+      result = result.gsub(
+        /(is_expected\.to\s+belong_to\(:#{association}\))((?:\.\w+(?:\([^)]*\))?)*)(\s*}\s*$)/m
+      ) do |match|
+        base = $1
+        chain = $2
+        ending = $3
+        
+        if chain && !chain.empty? && !chain.include?('.required') && !chain.include?('.optional')
+          "#{base}#{chain}.required#{ending}"
+        elsif chain.empty?
+          "#{base}.required#{ending}"
+        else
+          match
+        end
+      end
+      
+      # Handle multiline expectations where belong_to is on one line and methods on subsequent lines
+      lines = result.lines
+      modified_lines = []
+      in_multiline_expectation = false
+      expectation_belongs_to_line = nil
+      
+      lines.each_with_index do |line, index|
+        # Check if this is a multiline belong_to expectation start
+        if line =~ /is_expected\.to\s+belong_to\(:#{association}\)\s*$/ && !line.include?('.required') && !line.include?('.optional')
+          in_multiline_expectation = true
+          expectation_belongs_to_line = index
+          modified_lines << line
+        elsif in_multiline_expectation && (line =~ /^\s*end\s*$/ || line =~ /^\s*}\s*$/)
+          # This is the end of the multiline expectation
+          # Add .required before the end
+          modified_lines << "            .required\n"
+          modified_lines << line
+          in_multiline_expectation = false
+          expectation_belongs_to_line = nil
+        else
+          modified_lines << line
+        end
+      end
+      
+      result = modified_lines.join
+    end
+    
+    result
   end
 
   private
@@ -303,6 +397,10 @@ if __FILE__ == $0
       options[:dry_run] = true
     end
     
+    opts.on("--include-specs", "Also process spec files to add .required to belong_to expectations") do
+      options[:include_specs] = true
+    end
+    
     opts.on("-h", "--help", "Show this help message") do
       puts opts
       exit
@@ -317,7 +415,7 @@ if __FILE__ == $0
       exit 1
     end
     
-    replacer.replace_in_file(options[:file], dry_run: options[:dry_run])
+    replacer.replace_in_file(options[:file], dry_run: options[:dry_run], include_specs: options[:include_specs])
   else
     directory = options[:directory] || 'app/models'
     
@@ -326,6 +424,6 @@ if __FILE__ == $0
       exit 1
     end
     
-    replacer.replace_in_directory(directory, dry_run: options[:dry_run])
+    replacer.replace_in_directory(directory, dry_run: options[:dry_run], include_specs: options[:include_specs])
   end
 end

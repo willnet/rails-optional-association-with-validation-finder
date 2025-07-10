@@ -233,6 +233,67 @@ class TestReplaceOptionalWithRequired < Minitest::Test
     end
   end
 
+  def test_spec_file_transformation
+    input = <<~RUBY
+      RSpec.describe Post do
+        it { is_expected.to belong_to(:user) }
+        it { is_expected.to belong_to(:category).optional }
+        it { is_expected.to have_many(:comments) }
+      end
+    RUBY
+    
+    expected = <<~RUBY
+      RSpec.describe Post do
+        it { is_expected.to belong_to(:user).required }
+        it { is_expected.to belong_to(:category).optional }
+        it { is_expected.to have_many(:comments) }
+      end
+    RUBY
+    
+    # Create replacer with spec transformation enabled
+    replacer = OptionalToRequiredReplacer.new
+    result = replacer.transform_spec_code(input, ['user'])
+    assert_equal expected.strip, result.strip
+  end
+
+  def test_spec_file_with_multiline_expectations
+    input = <<~RUBY
+      RSpec.describe Article do
+        it do
+          is_expected.to belong_to(:author)
+        end
+        
+        it { is_expected.to belong_to(:editor) }
+      end
+    RUBY
+    
+    expected = "RSpec.describe Article do\n  it do\n    is_expected.to belong_to(:author)\n            .required\n  end\n  \n  it { is_expected.to belong_to(:editor).required }\nend"
+    
+    replacer = OptionalToRequiredReplacer.new
+    result = replacer.transform_spec_code(input, ['author', 'editor'])
+    assert_equal expected.strip, result.strip
+  end
+
+  def test_spec_file_already_has_required
+    input = <<~RUBY
+      RSpec.describe Product do
+        it { is_expected.to belong_to(:vendor).required }
+        it { is_expected.to belong_to(:category) }
+      end
+    RUBY
+    
+    expected = <<~RUBY
+      RSpec.describe Product do
+        it { is_expected.to belong_to(:vendor).required }
+        it { is_expected.to belong_to(:category).required }
+      end
+    RUBY
+    
+    replacer = OptionalToRequiredReplacer.new
+    result = replacer.transform_spec_code(input, ['vendor', 'category'])
+    assert_equal expected.strip, result.strip
+  end
+
   def test_dry_run_mode
     require 'tmpdir'
     require 'fileutils'

@@ -84,6 +84,23 @@ Preview what changes would be made without actually modifying files:
 ruby replace_optional_with_required.rb -d app/models --dry-run
 ```
 
+#### Include Spec Files
+
+Also process RSpec spec files to add `.required` to `belong_to` expectations:
+
+```bash
+ruby replace_optional_with_required.rb -d app/models --include-specs
+```
+
+This will transform RSpec expectations like:
+```ruby
+# Before
+it { is_expected.to belong_to(:user) }
+
+# After  
+it { is_expected.to belong_to(:user).required }
+```
+
 ### Transformation Example
 
 Before:
